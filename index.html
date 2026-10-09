@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Safety lock: only our own code may run, and the app may only talk to the card databases listed here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob: https://images.pokemontcg.io https://cards.scryfall.io https://images.ygoprodeck.com https://cards.lorcast.io; connect-src 'self' data: blob: https://api.pokemontcg.io https://api.scryfall.com https://db.ygoprodeck.com https://api.lorcast.com https://api.frankfurter.dev https://pokeapi.co; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob: https://images.pokemontcg.io https://cards.scryfall.io https://images.ygoprodeck.com https://cards.lorcast.io; connect-src 'self' data: blob: https://api.pokemontcg.io https://api.scryfall.com https://db.ygoprodeck.com https://api.lorcast.com https://api.frankfurter.dev https://pokeapi.co https://turboattaxcollector.com; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#313131">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -26,17 +26,20 @@
 <main>
   <!-- SCAN -->
   <section id="view-scan" class="view">
+    <label class="field">
+      <span>What are you scanning?</span>
+      <select id="scan-cat"></select>
+    </label>
     <div class="scan-buttons">
-      <label class="btn big primary">
+      <button id="btn-scan" class="btn big primary" type="button">
         <span class="btn-icon" aria-hidden="true">📷</span> Scan a card
-        <input id="in-camera" type="file" accept="image/*" capture="environment" class="visually-hidden">
-      </label>
+      </button>
       <label class="btn big">
         <span class="btn-icon" aria-hidden="true">🖼️</span> Choose a photo
         <input id="in-photo" type="file" accept="image/*" class="visually-hidden">
       </label>
     </div>
-    <p class="hint">Tip: hold the phone straight above the card, fill the whole picture with the card, and use good light with no glare. Take cards out of shiny sleeves if you can.</p>
+    <p class="hint">Tip: pick the card type first if you know it. Hold the phone straight above the card, line it up in the box, and avoid glare. Take cards out of shiny sleeves if you can.</p>
 
     <div id="scan-status" class="status" hidden>
       <img id="scan-thumb" alt="Your photo of the card" class="scan-thumb">
@@ -135,7 +138,7 @@
         <li>The only thing sent out is the card name, to free card databases, to look up the card.</li>
         <li>Prices are a guide only. Real sale prices change with condition and grading.</li>
       </ul>
-      <p class="muted small">Card data: Pokémon TCG API, Scryfall, YGOPRODeck, Lorcast. Exchange rates: Frankfurter. Text reading: Tesseract.js. This app is not made or endorsed by any card company or by eBay.</p>
+      <p class="muted small">Card data: Pokémon TCG API, PokéAPI, Scryfall, YGOPRODeck, Lorcast, Turbo Attax Collector. Exchange rates: Frankfurter. Text reading: Tesseract.js. This app is not made or endorsed by any card company or by eBay.</p>
     </div>
   </section>
 </main>
@@ -152,6 +155,21 @@
     <button id="sheet-close" class="btn ghost" type="button">‹ Back</button>
   </div>
   <div id="sheet-body" class="sheet-body"></div>
+</div>
+
+<!-- LIVE CAMERA with a card-shaped box to line up -->
+<div id="cam" class="cam" hidden role="dialog" aria-modal="true" aria-label="Camera">
+  <video id="cam-video" playsinline muted autoplay></video>
+  <div id="cam-frame" class="cam-frame"></div>
+  <p id="cam-note" class="cam-note" aria-live="polite"></p>
+  <div class="cam-bar">
+    <button id="cam-cancel" class="btn" type="button">Cancel</button>
+    <button id="cam-shot" class="btn primary" type="button">Take picture</button>
+    <label class="btn">
+      Phone camera
+      <input id="in-camera" type="file" accept="image/*" capture="environment" class="visually-hidden">
+    </label>
+  </div>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

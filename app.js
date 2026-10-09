@@ -52,7 +52,7 @@ const CATS = [
   { id: 'onepiece', label: 'One Piece' },
   { id: 'dragonball', label: 'Dragon Ball' },
   { id: 'digimon', label: 'Digimon' },
-  { id: 'f1', label: 'Formula 1' },
+  { id: 'f1', label: 'Formula 1', db: true },
   { id: 'basketball', label: 'Basketball' },
   { id: 'soccer', label: 'Soccer / Football' },
   { id: 'nfl', label: 'American Football' },
@@ -79,7 +79,7 @@ const CLUES = [
   ['lorcana', 4, /lorcana|ravensburger|storyborn|dreamborn|floodborn/], ['lorcana', 2, /disney/],
   ['onepiece', 4, /one piece/], ['onepiece', 3, /don!!|straw hat/],
   ['dragonball', 4, /dragon ?ball/], ['digimon', 4, /digimon|digivolve/],
-  ['f1', 4, /formula ?(1|one)\b/], ['f1', 3, /\bf1\b/], ['f1', 2, /grand prix/],
+  ['f1', 4, /formula ?(1|one)\b|turbo ?attax/], ['f1', 3, /\bf1\b/], ['f1', 2, /grand prix/],
   ['f1', 2, /ferrari|mclaren|red bull|mercedes-amg|alphatauri|haas|williams racing|alpine|aston martin|racing bulls|sauber/],
   ['f1', 3, /verstappen|hamilton|norris|leclerc|piastri|russell|sainz|alonso|ricciardo|gasly|ocon|tsunoda|albon|bottas|hulkenberg|antonelli|bearman|vettel|schumacher|senna/],
   ['basketball', 4, /\bw?nba\b/], ['basketball', 3, /basketball/],
@@ -288,6 +288,62 @@ const SOURCES = {
   },
 };
 
+/* ---------- F1 Turbo Attax checklist (names, numbers and card types; it has no prices) ---------- */
+const ATTAX_URL = 'https://turboattaxcollector.com/api/collections/2/cards';
+let attax = null;
+async function loadAttax() {
+  if (attax) return attax;
+  const c = store.get('cs.attax', null);
+  const tidy = (list) => list.slice(0, 3000).map((x) => ({
+    id: str(x && (x.card_id ?? x.id), 12), name: str(x && x.name, 80),
+    team: str(x && (x.category && x.category.name || x.team), 60), type: str(x && (x.type && x.type.name || x.type), 40),
+  })).filter((x) => x.id && x.name);
+  if (c && Array.isArray(c.cards) && c.cards.length && Date.now() - c.at < 7 * 864e5) return (attax = tidy(c.cards));
+  let j = null;
+  try { j = await getJson(ATTAX_URL, 20000); } catch { j = null; }
+  if (!Array.isArray(j)) j = await getJson('f1-attax.json', 20000); // optional copy kept in the app's own folder
+  if (!Array.isArray(j) || !j.length) throw new Error('could not be reached (blocked or down)');
+  attax = tidy(j);
+  store.set('cs.attax', { at: Date.now(), cards: attax });
+  return attax;
+}
+const plain = (t) => t.toLowerCase().normalize('NFD').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+SOURCES.f1 = {
+  async search(name, n) {
+    const cards = await loadAttax(), want = plain(name), num = (n || '').toLowerCase();
+    const year = (lastScan && lastScan.info && lastScan.info.year) || '';
+    const scored = [];
+    for (const c of cards) {
+      const have = plain(c.name);
+      let score = num && c.id.toLowerCase() === num ? 15 : 0;
+      for (const w of want) {
+        if (w.length < 3) continue;
+        if (have.some((x) => x === w || (w.length >= 5 && editDistance(x, w, 1) <= 1))) score += 10;
+      }
+      if (score >= 10) scored.push([score, c]);
+    }
+    scored.sort((a, b) => b[0] - a[0]);
+    return scored.slice(0, 24).map(([, c]) => ({
+      cat: 'f1', id: 'ta2-' + c.id, name: c.name, set: 'Topps Turbo Attax' + (c.team ? ' · ' + c.team : ''),
+      year, number: c.id, rarity: c.type, img: '', options: [],
+    }));
+  },
+};
+
+// Looks for a Turbo Attax card name (like a driver) among the words read off the card.
+function findAttax(text) {
+  if (!attax) return '';
+  const words = plain(text);
+  let best = null;
+  for (const c of attax) {
+    const need = plain(c.name).filter((w) => w.length >= 3);
+    const size = need.join('').length;
+    if (size < 6 || (best && size <= best.size)) continue;
+    if (need.every((w) => words.some((x) => x === w || (w.length >= 5 && editDistance(x, w, 1) <= 1)))) best = { size, name: c.name };
+  }
+  return best ? best.name : '';
+}
+
 /* ---------- Rarity ---------- */
 const TIERS = {
   very: { label: 'Very rare', stars: '★★★', cls: 'rare-very' },
@@ -299,10 +355,10 @@ const TIERS = {
 function tierOf(rarity) {
   const r = (rarity || '').toLowerCase();
   if (!r) return TIERS.unknown;
-  if (/secret|hyper|ultra|illustration|special|rainbow|starlight|ghost|mythic|legendary|enchanted|gold|prismatic|quarter century|amazing|shiny|very rare|super|holo|promo|collector|platinum/.test(r)) return TIERS.very;
+  if (/secret|hyper|ultra|illustration|special|rainbow|starlight|ghost|mythic|legendary|enchanted|gold|prismatic|quarter century|amazing|shiny|very rare|super|holo|promo|collector|platinum|limited|exclusive|signature/.test(r)) return TIERS.very;
   if (/uncommon/.test(r)) return TIERS.uncommon;
   if (/rare/.test(r)) return TIERS.rare;
-  if (/common|short print/.test(r)) return TIERS.common;
+  if (/common|short print|base/.test(r)) return TIERS.common;
   return TIERS.unknown;
 }
 
@@ -461,7 +517,6 @@ function analyze(sure, text) {
   };
 }
 
-const TOP_MODE = '11', FULL_MODE = '11'; // how the reader looks for text: 11 = find scattered bits of text
 let lastScan = null; // { thumb, info }
 
 const FILE_HELP = 'Scanning only works when the app is opened from a web link (like your GitHub Pages link). Right now it was opened as a file on this device, and browsers block the card reader for files. Put the folder on GitHub Pages (see README) and open that link instead.';
@@ -476,41 +531,51 @@ function whyReaderFailed(e) {
 async function handlePhoto(file) {
   if (!file) return;
   if (!/^image\//.test(file.type) || file.size > 40e6) { toast('Please pick a photo.'); return; }
+  let canvas;
+  try { canvas = await photoToCanvas(file, 1600); }
+  catch { toast("I couldn't open that photo. Try another one."); return; }
+  scanCanvas(canvas, false);
+}
+
+// framed = true means the picture came from the line-up box, so it is exactly the card and nothing else.
+async function scanCanvas(canvas, framed) {
   const status = $('#scan-status'), msg = $('#scan-msg'), bar = $('#scan-progress');
   $('#read-box').hidden = true; $('#results').replaceChildren(); $('#result-msg').hidden = true;
   status.hidden = false; bar.hidden = false; bar.removeAttribute('value');
   msg.textContent = 'Getting the card reader ready…';
-  let canvas;
-  try { canvas = await photoToCanvas(file, 1600); }
-  catch { msg.textContent = "I couldn't open that photo. Try another one."; bar.hidden = true; return; }
   const thumb = shrink(canvas, 200);
   $('#scan-thumb').src = thumb;
   let text = '', sure = '';
   try {
     let pass = 0;
+    // Where to look closely. With the line-up box we know the name strip (top) and the small print (bottom).
+    const strips = framed ? [[0, 0.2, 2], [0.78, 1, 2]] : [[0, 0.42, 1.5]];
+    const passes = strips.length + 1;
     onProgress = (m) => {
-      if (m.status === 'recognizing text') { msg.textContent = 'Reading the card…'; bar.value = (pass + (m.progress || 0)) / 2; }
+      if (m.status === 'recognizing text') { msg.textContent = 'Reading the card…'; bar.value = (pass + (m.progress || 0)) / passes; }
     };
     const reader = await getReader();
-    // Look twice: once closely at the top of the card (where the name lives), once at the whole card.
-    await reader.setParameters({ tessedit_pageseg_mode: TOP_MODE });
-    const top = (await reader.recognize(cropBoost(canvas, 0, 0.42, 1.5))).data;
-    pass = 1;
-    await reader.setParameters({ tessedit_pageseg_mode: FULL_MODE });
-    const full = (await reader.recognize(canvas)).data;
-    sure = sureLines(top) + '\n' + sureLines(full);
-    text = (top.text || '') + '\n' + (full.text || '');
+    await reader.setParameters({ tessedit_pageseg_mode: '11' }); // 11 = find scattered bits of text
+    for (const look of [...strips.map(([a, b, k]) => cropBoost(canvas, a, b, k)), canvas]) {
+      const d = (await reader.recognize(look)).data;
+      sure += sureLines(d) + '\n'; text += (d.text || '') + '\n';
+      pass++;
+    }
   } catch (e) {
     msg.textContent = whyReaderFailed(e);
     bar.hidden = true; lastScan = { thumb, info: null }; return;
   } finally { onProgress = null; }
   bar.hidden = true;
   const info = analyze(sure, text);
-  const poke = findPokemon(text);
-  if (poke && (!info.cat || info.cat === 'pokemon' || info.cat === 'sports')) {
-    info.cat = 'pokemon';
-    info.lines = [poke, ...info.lines.filter((l) => l.toLowerCase() !== poke.toLowerCase())].slice(0, 8);
-  }
+  // If you told the app what you are scanning, trust that over its own guess.
+  const forced = $('#scan-cat').value;
+  if (forced !== 'auto') info.cat = forced;
+  const poke = forced === 'auto' || forced === 'pokemon' ? findPokemon(text) : '';
+  const racer = forced === 'auto' || forced === 'f1' ? findAttax(text) : '';
+  const lead = (n) => { info.lines = [n, ...info.lines.filter((l) => l.toLowerCase() !== n.toLowerCase())].slice(0, 8); };
+  const open = (c) => !info.cat || info.cat === c || info.cat === 'sports';
+  if (poke && open('pokemon')) { info.cat = 'pokemon'; lead(poke); }
+  else if (racer && open('f1')) { info.cat = 'f1'; lead(racer); }
   lastScan = { thumb, info };
   showRead(info);
   if (!info.lines.length) {
@@ -539,6 +604,41 @@ function showRead(info) {
   })));
 }
 
+/* ---------- Live camera with a line-up box ---------- */
+let camStream = null;
+async function openCamera() {
+  const note = $('#cam-note');
+  $('#cam').hidden = false;
+  note.textContent = 'Line the card up inside the box';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { note.textContent = "The live camera isn't available here. Tap Phone camera below."; return; }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    if ($('#cam').hidden) { stopCamera(); return; } // closed while waiting for permission
+    const v = $('#cam-video'); v.srcObject = camStream; await v.play();
+  } catch { note.textContent = "I can't use the live camera (it may be blocked). Tap Phone camera below."; }
+}
+function stopCamera() {
+  if (camStream) camStream.getTracks().forEach((t) => t.stop());
+  camStream = null; $('#cam-video').srcObject = null;
+}
+function closeCamera() { stopCamera(); $('#cam').hidden = true; }
+function takePicture() {
+  const v = $('#cam-video');
+  if (!v.videoWidth) { toast('The camera is not ready yet.'); return; }
+  // Work out which part of the camera picture sits inside the box on screen.
+  const vr = v.getBoundingClientRect(), fr = $('#cam-frame').getBoundingClientRect();
+  const k = Math.max(vr.width / v.videoWidth, vr.height / v.videoHeight);
+  const ox = (vr.width - v.videoWidth * k) / 2, oy = (vr.height - v.videoHeight * k) / 2, pad = fr.width * 0.02;
+  const x = Math.max(0, (fr.left - vr.left - ox - pad) / k), y = Math.max(0, (fr.top - vr.top - oy - pad) / k);
+  const w = Math.min(v.videoWidth - x, (fr.width + 2 * pad) / k), ht = Math.min(v.videoHeight - y, (fr.height + 2 * pad) / k);
+  const z = Math.min(2, 1600 / ht);
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * z); c.height = Math.round(ht * z);
+  c.getContext('2d').drawImage(v, x, y, w, ht, 0, 0, c.width, c.height);
+  closeCamera();
+  scanCanvas(c, true);
+}
+
 /* ---------- Searching ---------- */
 let searchRun = 0;
 function showNotice(text) { const n = $('#result-msg'); n.textContent = text; n.hidden = !text; }
@@ -549,7 +649,7 @@ async function runSearch(names, cat, number) {
   number = /^[A-Za-z0-9-]{1,12}$/.test(number || '') ? number : '';
   if (cat !== 'auto' && !(CAT[cat] && CAT[cat].db)) { openSheet(manualDraft(names[0], cat)); return; }
   const mine = ++searchRun;
-  const keys = cat === 'auto' ? Object.keys(SOURCES) : [cat];
+  const keys = cat === 'auto' ? ['pokemon', 'magic', 'yugioh', 'lorcana', ...(attax ? ['f1'] : [])] : [cat];
   showNotice('Looking up the card… this can take up to half a minute.');
   $('#results').replaceChildren();
   let found = [], failed = 0, why = '';
@@ -565,6 +665,12 @@ async function runSearch(names, cat, number) {
   const wanted = names[0].toLowerCase();
   found.sort((a, b) => (b.name.toLowerCase() === wanted) - (a.name.toLowerCase() === wanted));
   const missing = failed ? ' Results may be missing: ' + why : '';
+  if (!found.length && cat === 'f1') {
+    // Not in the Turbo Attax list (or the list would not load): fill in the card by hand instead.
+    showNotice("I couldn't find this in the F1 Turbo Attax list" + (failed ? ` (${why})` : '') + '. Check the details I read, then look up sold prices on eBay.');
+    openSheet(manualDraft(names[0], 'f1'));
+    return;
+  }
   if (!found.length) {
     showNotice(failed === keys.length
       ? "I couldn't get an answer. " + why + ' Try again in a minute, or add the card by hand.'
@@ -597,7 +703,7 @@ function dbDraft(c) {
   let sel = 0;
   const code = lastScan && lastScan.info && lastScan.info.setCode;
   if (code) { const i = c.options.findIndex((o) => o.number === code); if (i >= 0) sel = i; }
-  const d = { src: 'db', cat: c.cat, id: c.id, name: c.name, set: c.set, year: c.year, number: c.number, rarity: c.rarity, img: c.img, options: c.options, sel, my: null, qty: 1 };
+  const d = { src: 'db', cat: c.cat, id: c.id, name: c.name, set: c.set, year: c.year, number: c.number, rarity: c.rarity, img: c.img || (c.cat === 'f1' && lastScan && lastScan.thumb) || '', options: c.options, sel, my: null, qty: 1 };
   pick(d, sel);
   return d;
 }
@@ -615,7 +721,8 @@ function manualDraft(name, cat) {
 }
 
 function ebayUrl(d) {
-  const words = d.src === 'manual' ? [d.year, d.set, d.name, d.number && '#' + d.number] : [d.name, d.number, d.set];
+  const words = d.src === 'manual' ? [d.year, d.set, d.name, d.number && '#' + d.number]
+    : d.cat === 'f1' ? ['Topps Turbo Attax', d.year, d.name, d.number] : [d.name, d.number, d.set];
   const q = words.filter(Boolean).join(' ').slice(0, 200);
   // LH_Sold + LH_Complete = sold items only. _sop=13 = newest sales first.
   return `https://${CURRENCIES[settings.currency].ebay}/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_Sold=1&LH_Complete=1&_sop=13`;
@@ -766,7 +873,7 @@ function renderCollection() {
 
 async function refreshPrices() {
   const btn = $('#btn-refresh'), note = $('#col-msg');
-  const todo = collection.filter((c) => c.src === 'db' && c.id && SOURCES[c.cat]);
+  const todo = collection.filter((c) => c.src === 'db' && c.id && SOURCES[c.cat] && SOURCES[c.cat].byId);
   if (!todo.length) { toast('No cards with database prices to update.'); return; }
   btn.disabled = true; note.hidden = false;
   let ok = 0, bad = 0;
@@ -814,6 +921,8 @@ async function checkConnections() {
     ['Yu-Gi-Oh! prices', 'https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=kuriboh&num=1&offset=0'],
     ['Lorcana prices', 'https://api.lorcast.com/v0/cards/search?q=elsa'],
     ['Exchange rates', 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=AUD'],
+    ['Pokémon name list', 'https://pokeapi.co/api/v2/pokemon-species?limit=1'],
+    ['F1 Turbo Attax list', () => { attax = null; store.set('cs.attax', null); return loadAttax(); }],
   ];
   btn.disabled = true;
   list.replaceChildren(h('li', { text: 'Checking… this can take up to a minute.' }));
@@ -823,7 +932,7 @@ async function checkConnections() {
     : await Promise.all(['worker.min.js', 'tesseract-core-simd-lstm.wasm.js', 'tesseract-core-lstm.wasm.js', 'eng.traineddata.gz']
       .map((f) => fetch('vendor/' + f, { method: 'HEAD', cache: 'no-store' }).then((r) => (r.ok ? '' : f), () => f)))
       .then((miss) => (miss.filter(Boolean).length ? 'Card reader: ✖ missing from the vendor folder: ' + miss.filter(Boolean).join(', ') : 'Card reader: ✔ all files found')));
-  const done = await Promise.allSettled(tests.map(([, url]) => { const t = Date.now(); return getJson(url).then(() => Date.now() - t); }));
+  const done = await Promise.allSettled(tests.map(([, url]) => { const t = Date.now(); return (typeof url === 'function' ? url() : getJson(url)).then(() => Date.now() - t); }));
   done.forEach((d, i) => rows.push(`${tests[i][0]}: ` + (d.status === 'fulfilled' ? `✔ working (${(d.value / 1000).toFixed(1)}s)` : `✖ ${d.reason.message}`)));
   list.replaceChildren(...rows.map((t) => h('li', { text: t })));
   btn.disabled = false;
@@ -851,8 +960,15 @@ function start() {
 
   document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
   for (const id of ['#in-camera', '#in-photo']) {
-    $(id).addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; handlePhoto(f); });
+    $(id).addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; closeCamera(); handlePhoto(f); });
   }
+  $('#scan-cat').append(h('option', { value: 'auto', text: 'Not sure (work it out)' }), ...CATS.map((c) => h('option', { value: c.id, text: c.label })));
+  $('#scan-cat').value = CAT[settings.scanCat] ? settings.scanCat : 'auto';
+  $('#scan-cat').addEventListener('change', (e) => { settings.scanCat = e.target.value; store.set('cs.settings', settings); });
+  $('#btn-scan').addEventListener('click', openCamera);
+  $('#cam-shot').addEventListener('click', takePicture);
+  $('#cam-cancel').addEventListener('click', closeCamera);
+  document.addEventListener('visibilitychange', () => { if (document.hidden && !$('#cam').hidden) closeCamera(); });
   $('#search-form').addEventListener('submit', (e) => {
     e.preventDefault();
     runSearch([$('#q').value], $('#q-cat').value, $('#q-num').value.trim());
@@ -881,5 +997,6 @@ function start() {
   renderAll();
   loadRates();
   loadPokeNames();
+  loadAttax().catch(() => {});
 }
 start();

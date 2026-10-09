@@ -28,6 +28,7 @@ adds up its total value.
 - **Scanning** reads the words printed on the card, on your device. The photo is never uploaded.
 - **Card type** is worked out from clue words (for example "HP" and "Weakness" mean Pokémon, "Formula 1" or a driver's name means F1).
 - **Prices** for Pokémon, Magic, Yu-Gi-Oh! and Lorcana come from free card databases (TCGplayer market averages).
+- **F1 Turbo Attax cards** are matched against the Turbo Attax Collector checklist (name, number, team and card type). It has no prices, so use the eBay button.
 - **Sports, F1 and other cards** have no free price list, so the app fills in what it read and gives you a button that opens eBay's sold listings, newest first. Type the price you see and the app remembers it.
 - **Your collection** is saved in your browser on your device only. Use Settings → Save a backup file now and then.
 

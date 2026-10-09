@@ -257,3 +257,23 @@ dl.facts {
   dl.facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { .btn:active, .item:active .item-pic { transform: none; } }
+
+/* Live camera with a card-shaped line-up box */
+.cam { position: fixed; inset: 0; z-index: 30; background: #000; overflow: hidden; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam-frame {
+  position: absolute; left: 50%; top: calc(50% - 50px); transform: translate(-50%, -50%);
+  width: min(82vw, calc((100vh - 230px) * 0.716)); aspect-ratio: 63 / 88; /* the shape of a trading card */
+  border: 4px solid #fff; border-radius: 14px; box-shadow: 0 0 0 200vmax rgba(0, 0, 0, 0.55);
+}
+.cam-note {
+  position: absolute; left: 12px; right: 12px; top: calc(12px + env(safe-area-inset-top));
+  text-align: center; color: #fff; font-weight: 700; text-shadow: 0 1px 4px #000;
+}
+.cam-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 10px;
+  padding: 12px max(12px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: var(--dark);
+}
+.cam-bar .btn { min-height: 56px; padding: 8px; background: var(--dark-2); }
+.cam-bar .btn.primary { background: var(--orange); }
