@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Safety lock: only our own code may run, and the app may only talk to the card databases listed here. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data: blob: https://images.pokemontcg.io https://cards.scryfall.io https://images.ygoprodeck.com https://cards.lorcast.io; connect-src 'self' https://api.pokemontcg.io https://api.scryfall.com https://db.ygoprodeck.com https://api.lorcast.com https://api.frankfurter.dev; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#313131">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Card Scanner">
+<title>Card Scanner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+<script src="vendor/tesseract.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <h1>Card Scanner</h1>
+  <p id="top-total" class="top-total" aria-live="polite"></p>
+</header>
+
+<main>
+  <!-- SCAN -->
+  <section id="view-scan" class="view">
+    <div class="scan-buttons">
+      <label class="btn big primary">
+        <span class="btn-icon" aria-hidden="true">📷</span> Scan a card
+        <input id="in-camera" type="file" accept="image/*" capture="environment" class="visually-hidden">
+      </label>
+      <label class="btn big">
+        <span class="btn-icon" aria-hidden="true">🖼️</span> Choose a photo
+        <input id="in-photo" type="file" accept="image/*" class="visually-hidden">
+      </label>
+    </div>
+    <p class="hint">Tip: lay the card flat, fill the screen with it, and use good light with no glare.</p>
+
+    <div id="scan-status" class="status" hidden>
+      <img id="scan-thumb" alt="Your photo of the card" class="scan-thumb">
+      <div class="status-body">
+        <p id="scan-msg"></p>
+        <progress id="scan-progress" max="1" value="0"></progress>
+      </div>
+    </div>
+
+    <div id="read-box" class="card-box green" hidden>
+      <h2>What I read on the card</h2>
+      <p id="read-cat" class="muted"></p>
+      <p class="muted small">Wrong name? Tap the line that is the card's name.</p>
+      <div id="read-lines" class="chips"></div>
+    </div>
+
+    <form id="search-form" class="card-box dark" autocomplete="off">
+      <h2>Or search by name</h2>
+      <label class="field">
+        <span>Card name</span>
+        <input id="q" type="search" maxlength="80" placeholder="e.g. Charizard" enterkeyhint="search">
+      </label>
+      <div class="row">
+        <label class="field grow">
+          <span>Card number (optional)</span>
+          <input id="q-num" type="text" inputmode="text" maxlength="12" placeholder="e.g. 4">
+        </label>
+        <label class="field grow">
+          <span>Card type</span>
+          <select id="q-cat"></select>
+        </label>
+      </div>
+      <button class="btn primary" type="submit">Search</button>
+    </form>
+
+    <p id="result-msg" class="notice" hidden></p>
+    <div id="results" class="list"></div>
+    <button id="btn-manual" class="btn ghost" type="button">Can't find it? Add it by hand</button>
+  </section>
+
+  <!-- COLLECTION -->
+  <section id="view-collection" class="view" hidden>
+    <div class="total-box">
+      <p class="muted">My collection is worth about</p>
+      <p id="col-total" class="total"></p>
+      <p id="col-count" class="muted"></p>
+    </div>
+    <div id="col-cats" class="chips"></div>
+    <div class="row">
+      <label class="field grow">
+        <span>Sort by</span>
+        <select id="col-sort">
+          <option value="new">Newest first</option>
+          <option value="value">Most valuable</option>
+          <option value="name">Name A–Z</option>
+        </select>
+      </label>
+      <button id="btn-refresh" class="btn blue" type="button">Update prices</button>
+    </div>
+    <p id="col-msg" class="notice" hidden></p>
+    <div id="col-list" class="list"></div>
+    <p id="col-empty" class="empty" hidden>No cards yet. Scan one to start your collection!</p>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="view-settings" class="view" hidden>
+    <div class="card-box">
+      <h2>Money</h2>
+      <label class="field">
+        <span>Show prices in</span>
+        <select id="set-currency"></select>
+      </label>
+      <p id="rate-note" class="muted small"></p>
+    </div>
+    <div class="card-box">
+      <h2>Backup</h2>
+      <p class="muted small">Your collection is saved only on this device. Save a backup file so you don't lose it if you clear your browser or change phones.</p>
+      <button id="btn-export" class="btn" type="button">Save a backup file</button>
+      <label class="btn">
+        Load a backup file
+        <input id="in-import" type="file" accept="application/json,.json" class="visually-hidden">
+      </label>
+      <button id="btn-wipe" class="btn danger" type="button">Delete my whole collection</button>
+    </div>
+    <div class="card-box">
+      <h2>Privacy and safety</h2>
+      <ul class="plain">
+        <li>Your photos never leave your device. The card reading happens right here on your phone.</li>
+        <li>No account, no passwords, no ads, no tracking.</li>
+        <li>The only thing sent out is the card name, to free card databases, to look up the card.</li>
+        <li>Prices are a guide only. Real sale prices change with condition and grading.</li>
+      </ul>
+      <p class="muted small">Card data: Pokémon TCG API, Scryfall, YGOPRODeck, Lorcast. Exchange rates: Frankfurter. Text reading: Tesseract.js. This app is not made or endorsed by any card company or by eBay.</p>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs" aria-label="Main">
+  <button class="tab" data-view="scan" type="button" aria-current="page"><span aria-hidden="true">📷</span>Scan</button>
+  <button class="tab" data-view="collection" type="button"><span aria-hidden="true">🗂️</span>Collection</button>
+  <button class="tab" data-view="settings" type="button"><span aria-hidden="true">⚙️</span>Settings</button>
+</nav>
+
+<!-- CARD DETAILS (slides over the page) -->
+<div id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <div class="sheet-bar">
+    <button id="sheet-close" class="btn ghost" type="button">‹ Back</button>
+  </div>
+  <div id="sheet-body" class="sheet-body"></div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<noscript><p class="notice">This app needs JavaScript turned on to work.</p></noscript>
+</body>
+</html>

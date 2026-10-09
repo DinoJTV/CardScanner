@@ -1,0 +1,13 @@
+{
+  "name": "Card Scanner",
+  "short_name": "Card Scanner",
+  "description": "Scan trading cards, see what they are worth, and track your collection.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#313131",
+  "theme_color": "#313131",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
