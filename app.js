@@ -172,7 +172,7 @@ async function loadRates() {
 }
 
 /* ---------- Talking to the free card databases ---------- */
-async function getJson(url, ms = 15000) {
+async function getJson(url, ms = 40000) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), ms);
   try {
@@ -180,6 +180,11 @@ async function getJson(url, ms = 15000) {
     if (res.status === 404 || res.status === 400) return null; // these databases use 404/400 to mean "no cards found"
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return await res.json();
+  } catch (e) {
+    // Turn browser errors into plain reasons we can show on screen.
+    if (e && e.name === 'AbortError') throw new Error('took too long to answer');
+    if (e instanceof TypeError) throw new Error(navigator.onLine === false ? 'your device is offline' : 'could not be reached (blocked or down)');
+    throw new Error(/^HTTP/.test(e.message) ? 'answered with an error (' + e.message + ')' : 'sent something I could not read');
   } finally { clearTimeout(timer); }
 }
 
@@ -446,23 +451,24 @@ async function runSearch(names, cat, number) {
   if (cat !== 'auto' && !(CAT[cat] && CAT[cat].db)) { openSheet(manualDraft(names[0], cat)); return; }
   const mine = ++searchRun;
   const keys = cat === 'auto' ? Object.keys(SOURCES) : [cat];
-  showNotice('Looking up the card…');
+  showNotice('Looking up the card… this can take up to half a minute.');
   $('#results').replaceChildren();
-  let found = [], failed = 0;
+  let found = [], failed = 0, why = '';
   for (const name of names) {
     const done = await Promise.allSettled(keys.map((k) => SOURCES[k].search(name, number)));
     if (mine !== searchRun) return;
     failed = done.filter((d) => d.status === 'rejected').length;
+    why = done.map((d, i) => (d.status === 'rejected' ? `${catLabel(keys[i])} database ${d.reason.message}.` : '')).filter(Boolean).join(' ');
     found = done.flatMap((d) => (d.status === 'fulfilled' ? d.value : [])).filter((c) => c.name);
     if (found.length) { $('#q').value = name; break; }
   }
   if (number) found.sort((a, b) => (b.number === number) - (a.number === number));
   const wanted = names[0].toLowerCase();
   found.sort((a, b) => (b.name.toLowerCase() === wanted) - (a.name.toLowerCase() === wanted));
-  const missing = failed ? ' Some card databases did not answer, so results may be missing.' : '';
+  const missing = failed ? ' Results may be missing: ' + why : '';
   if (!found.length) {
     showNotice(failed === keys.length
-      ? "I couldn't reach the card databases. Check your internet and try again."
+      ? "I couldn't get an answer. " + why + ' Try again in a minute, or add the card by hand.'
       : 'No match found. Check the spelling, tap a different line, or add it by hand.' + missing);
     return;
   }
@@ -700,6 +706,30 @@ async function importBackup(file) {
   collection.push(...fresh); save(); renderCollection(); toast('Backup loaded.');
 }
 
+/* ---------- Connection check (Settings) ---------- */
+async function checkConnections() {
+  const list = $('#net-list'), btn = $('#btn-net');
+  const tests = [
+    ['Pokémon prices', `${PK}?q=name:pikachu&pageSize=1&select=id`],
+    ['Magic prices', 'https://api.scryfall.com/cards/search?q=black+lotus'],
+    ['Yu-Gi-Oh! prices', 'https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=kuriboh&num=1&offset=0'],
+    ['Lorcana prices', 'https://api.lorcast.com/v0/cards/search?q=elsa'],
+    ['Exchange rates', 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=AUD'],
+  ];
+  btn.disabled = true;
+  list.replaceChildren(h('li', { text: 'Checking… this can take up to a minute.' }));
+  const rows = [];
+  rows.push(location.protocol === 'file:' ? 'Card reader: ✖ app was opened as a file, not a web link'
+    : !window.Tesseract ? "Card reader: ✖ vendor/tesseract.min.js is missing"
+    : await Promise.all(['worker.min.js', 'tesseract-core-simd-lstm.wasm.js', 'tesseract-core-lstm.wasm.js', 'eng.traineddata.gz']
+      .map((f) => fetch('vendor/' + f, { method: 'HEAD', cache: 'no-store' }).then((r) => (r.ok ? '' : f), () => f)))
+      .then((miss) => (miss.filter(Boolean).length ? 'Card reader: ✖ missing from the vendor folder: ' + miss.filter(Boolean).join(', ') : 'Card reader: ✔ all files found')));
+  const done = await Promise.allSettled(tests.map(([, url]) => { const t = Date.now(); return getJson(url).then(() => Date.now() - t); }));
+  done.forEach((d, i) => rows.push(`${tests[i][0]}: ` + (d.status === 'fulfilled' ? `✔ working (${(d.value / 1000).toFixed(1)}s)` : `✖ ${d.reason.message}`)));
+  list.replaceChildren(...rows.map((t) => h('li', { text: t })));
+  btn.disabled = false;
+}
+
 /* ---------- Tabs and start-up ---------- */
 function showView(name) {
   for (const v of ['scan', 'collection', 'settings']) $('#view-' + v).hidden = v !== name;
@@ -740,6 +770,7 @@ function start() {
     if (CURRENCIES[e.target.value]) { settings.currency = e.target.value; store.set('cs.settings', settings); renderAll(); $('#results').replaceChildren(); showNotice(''); }
   });
   $('#btn-export').addEventListener('click', exportBackup);
+  $('#btn-net').addEventListener('click', checkConnections);
   $('#in-import').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; importBackup(f); });
   $('#btn-wipe').addEventListener('click', () => {
     if (!collection.length) { toast('Your collection is already empty.'); return; }
