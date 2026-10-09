@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Safety lock: only our own code may run, and the app may only talk to the card databases listed here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob: https://images.pokemontcg.io https://cards.scryfall.io https://images.ygoprodeck.com https://cards.lorcast.io; connect-src 'self' data: blob: https://api.pokemontcg.io https://api.scryfall.com https://db.ygoprodeck.com https://api.lorcast.com https://api.frankfurter.dev; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob: https://images.pokemontcg.io https://cards.scryfall.io https://images.ygoprodeck.com https://cards.lorcast.io; connect-src 'self' data: blob: https://api.pokemontcg.io https://api.scryfall.com https://db.ygoprodeck.com https://api.lorcast.com https://api.frankfurter.dev https://pokeapi.co; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#313131">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -36,7 +36,7 @@
         <input id="in-photo" type="file" accept="image/*" class="visually-hidden">
       </label>
     </div>
-    <p class="hint">Tip: lay the card flat, fill the screen with it, and use good light with no glare.</p>
+    <p class="hint">Tip: hold the phone straight above the card, fill the whole picture with the card, and use good light with no glare. Take cards out of shiny sleeves if you can.</p>
 
     <div id="scan-status" class="status" hidden>
       <img id="scan-thumb" alt="Your photo of the card" class="scan-thumb">

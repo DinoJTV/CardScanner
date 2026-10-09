@@ -263,7 +263,12 @@ const SOURCES = {
   magic: {
     async search(name) {
       const j = await getJson(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(nameForQuery(name))}&unique=prints&order=released`);
-      return ((j && j.data) || []).slice(0, 24).map(mtgCard);
+      if (j && j.data && j.data.length) return j.data.slice(0, 24).map(mtgCard);
+      // Nothing found: ask the database for its best guess at a slightly misspelled name.
+      const guess = await getJson(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(nameForQuery(name))}`);
+      if (!guess || !guess.name) return [];
+      const again = await getJson(`https://api.scryfall.com/cards/search?q=${encodeURIComponent('!"' + nameForQuery(guess.name) + '"')}&unique=prints&order=released`);
+      return ((again && again.data) || [guess]).slice(0, 24).map(mtgCard);
     },
     async byId(it) { const j = await getJson(`https://api.scryfall.com/cards/${encodeURIComponent(it.id)}`); return j && j.id ? mtgCard(j) : null; },
   },
@@ -344,15 +349,95 @@ function shrink(canvas, width) {
   return c.toDataURL('image/jpeg', 0.6);
 }
 
+const WORD_OK = /^(\p{Lu}?\p{Ll}+|\p{Lu}+|(Mc|Mac|De|Di|La|Le|Van)\p{Lu}\p{Ll}+)(['’\-.]\p{L}*)*$/u;
+
+// The reader gives each word a "how sure am I" score out of 100. Keep only the words it is fairly sure about.
+function sureLines(data) {
+  if (!data.lines || !data.lines.length) return data.text || '';
+  const out = [];
+  for (const line of data.lines) {
+    const words = (line.words || []).filter((w) => w.confidence >= 65).map((w) => w.text.trim()).filter(Boolean);
+    if (words.length) out.push(words.join(' '));
+  }
+  return out.join('\n');
+}
+
+// Cuts out part of the photo, makes it bigger, and turns it into strong black-and-white so letters stand out.
+function cropBoost(src, top, bottom, scale) {
+  const sy = Math.round(src.height * top), sh = Math.round(src.height * (bottom - top));
+  const c = document.createElement('canvas');
+  c.width = Math.round(src.width * scale); c.height = Math.round(sh * scale);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, 0, sy, src.width, sh, 0, 0, c.width, c.height);
+  const img = ctx.getImageData(0, 0, c.width, c.height), d = img.data, hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) { const g = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8; d[i] = g; hist[g]++; }
+  const total = d.length / 4; let lo = 0, hi = 255, n = 0;
+  for (n = 0; lo < 255 && (n += hist[lo]) < total * 0.03; lo++);
+  for (n = 0; hi > 0 && (n += hist[hi]) < total * 0.03; hi--);
+  const k = 255 / Math.max(1, hi - lo);
+  for (let i = 0; i < d.length; i += 4) { const g = Math.max(0, Math.min(255, (d[i] - lo) * k)); d[i] = d[i + 1] = d[i + 2] = g; }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+/* ---------- Pokémon name list: fixes small reading mistakes like "Charizarcl" ---------- */
+let pokeNames = [];
+async function loadPokeNames() {
+  const cached = store.get('cs.pknames', null);
+  if (cached && Array.isArray(cached.names) && cached.names.length > 900 && Date.now() - cached.at < 30 * 864e5) { pokeNames = cached.names.map((x) => str(x, 30)); return; }
+  try {
+    const j = await getJson('https://pokeapi.co/api/v2/pokemon-species?limit=2000');
+    const names = ((j && j.results) || []).map((r) => str(r.name, 30)).filter((x) => /^[a-z0-9-]+$/.test(x));
+    if (names.length > 900) { pokeNames = names; store.set('cs.pknames', { at: Date.now(), names }); }
+  } catch { /* scanning still works without the list */ }
+}
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i]; let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// Looks through every word read off the card for something that is (nearly) a Pokémon's name.
+function findPokemon(text) {
+  if (!pokeNames.length) return '';
+  const words = text.toLowerCase().replace(/[^a-z0-9é\s-]/g, ' ').replace(/é/g, 'e').split(/\s+/).filter(Boolean);
+  let best = null;
+  for (const name of pokeNames) {
+    const parts = name.split('-'), n = parts.length, target = parts.join(' ');
+    if (target.length < 3) continue;
+    const allow = target.length >= 9 ? 2 : target.length >= 6 ? 1 : 0;
+    for (let i = 0; i + n <= words.length; i++) {
+      const got = words.slice(i, i + n).join(' ');
+      const dist = editDistance(got, target, allow);
+      if (dist > allow) continue;
+      const rank = dist * 100 - target.length * 2 + i * 0.01; // closest match first, then longer names, then nearer the top
+      if (!best || rank < best.rank) best = { rank, name: target, after: words[i + n] || '' };
+    }
+  }
+  if (!best) return '';
+  const nice = best.name.replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+  const tag = { ex: 'ex', gx: 'GX', v: 'V', vmax: 'VMAX', vstar: 'VSTAR' }[best.after];
+  return tag ? `${nice} ${tag}` : nice;
+}
+
 // Turns the raw words read off the card into: likely name lines, card number, year and card type.
-function analyze(text) {
+function analyze(sure, text) {
   const low = text.toLowerCase();
   const lines = [];
-  for (const raw of text.split('\n')) {
+  for (const raw of sure.split('\n')) {
     if (BORING.test(raw)) continue;
     let s = raw.replace(/\b\d{2,3}\s*HP\b|\bHP\s*\d{2,3}\b/gi, ' ').replace(/[^\p{L}\p{N} '’\-.&]/gu, ' ');
     s = s.replace(/^\s*(basic|stage\s*\d?)\s+/i, ' ');
-    let words = s.split(/\s+/).filter((w) => /\p{L}/u.test(w));
+    // Real words look like "Pikachu", "VMAX" or "ex". Jumbles like "JXAe" are the reader guessing at the artwork.
+    let words = s.split(/\s+/).filter((w) => /\p{L}/u.test(w) && WORD_OK.test(w));
     while (words.length && words[0].length === 1) words.shift();
     while (words.length && words[words.length - 1].length === 1 && !/[VX]/.test(words[words.length - 1])) words.pop();
     s = words.join(' ').replace(/^[.\-'&]+|[.\-'&]+$/g, '');
@@ -376,6 +461,7 @@ function analyze(text) {
   };
 }
 
+const TOP_MODE = '11', FULL_MODE = '11'; // how the reader looks for text: 11 = find scattered bits of text
 let lastScan = null; // { thumb, info }
 
 const FILE_HELP = 'Scanning only works when the app is opened from a web link (like your GitHub Pages link). Right now it was opened as a file on this device, and browsers block the card reader for files. Put the folder on GitHub Pages (see README) and open that link instead.';
@@ -399,23 +485,36 @@ async function handlePhoto(file) {
   catch { msg.textContent = "I couldn't open that photo. Try another one."; bar.hidden = true; return; }
   const thumb = shrink(canvas, 200);
   $('#scan-thumb').src = thumb;
-  let text = '';
+  let text = '', sure = '';
   try {
+    let pass = 0;
     onProgress = (m) => {
-      if (m.status === 'recognizing text') { msg.textContent = 'Reading the card…'; bar.value = m.progress || 0; }
+      if (m.status === 'recognizing text') { msg.textContent = 'Reading the card…'; bar.value = (pass + (m.progress || 0)) / 2; }
     };
     const reader = await getReader();
-    text = (await reader.recognize(canvas)).data.text || '';
+    // Look twice: once closely at the top of the card (where the name lives), once at the whole card.
+    await reader.setParameters({ tessedit_pageseg_mode: TOP_MODE });
+    const top = (await reader.recognize(cropBoost(canvas, 0, 0.42, 1.5))).data;
+    pass = 1;
+    await reader.setParameters({ tessedit_pageseg_mode: FULL_MODE });
+    const full = (await reader.recognize(canvas)).data;
+    sure = sureLines(top) + '\n' + sureLines(full);
+    text = (top.text || '') + '\n' + (full.text || '');
   } catch (e) {
     msg.textContent = whyReaderFailed(e);
     bar.hidden = true; lastScan = { thumb, info: null }; return;
   } finally { onProgress = null; }
   bar.hidden = true;
-  const info = analyze(text);
+  const info = analyze(sure, text);
+  const poke = findPokemon(text);
+  if (poke && (!info.cat || info.cat === 'pokemon' || info.cat === 'sports')) {
+    info.cat = 'pokemon';
+    info.lines = [poke, ...info.lines.filter((l) => l.toLowerCase() !== poke.toLowerCase())].slice(0, 8);
+  }
   lastScan = { thumb, info };
   showRead(info);
   if (!info.lines.length) {
-    msg.textContent = "I couldn't read any words. Try again with more light and less glare, or type the name below.";
+    msg.textContent = "I couldn't read the name clearly. Hold the phone flat above the card, fill the picture with the card, avoid glare, then try again. Or type the name below.";
     return;
   }
   msg.textContent = 'Done reading!';
@@ -781,5 +880,6 @@ function start() {
   if (location.protocol === 'file:') showNotice(FILE_HELP);
   renderAll();
   loadRates();
+  loadPokeNames();
 }
 start();
