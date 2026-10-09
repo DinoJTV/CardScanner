@@ -300,7 +300,8 @@ function tierOf(rarity) {
 let workerPromise = null;
 let onProgress = null;
 function getReader() {
-  if (!window.Tesseract) return Promise.reject(new Error('reader missing'));
+  if (location.protocol === 'file:') return Promise.reject(new Error('opened-as-file'));
+  if (!window.Tesseract || !window.Worker) return Promise.reject(new Error('reader-missing'));
   if (!workerPromise) {
     const base = new URL('vendor', document.baseURI).href; // our own copy of the reader, no outside code
     workerPromise = Tesseract.createWorker('eng', 1, {
@@ -308,7 +309,9 @@ function getReader() {
       logger: (m) => { if (onProgress) onProgress(m); },
     }).catch((e) => { workerPromise = null; throw e; });
   }
-  return workerPromise;
+  // If the reader's files are missing it can wait forever, so give up after a minute and say why.
+  const wait = new Promise((_, bad) => setTimeout(() => bad(new Error('reader-slow')), 60000));
+  return Promise.race([workerPromise, wait]).catch((e) => { workerPromise = null; throw e; });
 }
 
 async function photoToCanvas(file, maxSide) {
@@ -370,6 +373,15 @@ function analyze(text) {
 
 let lastScan = null; // { thumb, info }
 
+const FILE_HELP = 'Scanning only works when the app is opened from a web link (like your GitHub Pages link). Right now it was opened as a file on this device, and browsers block the card reader for files. Put the folder on GitHub Pages (see README) and open that link instead.';
+function whyReaderFailed(e) {
+  const m = String((e && e.message) || e || '');
+  if (m === 'opened-as-file') return FILE_HELP;
+  if (m === 'reader-missing') return "The card reader files are missing. Make sure the whole 'vendor' folder was uploaded next to index.html, then reload.";
+  if (m === 'reader-slow') return "The card reader took too long to load. Check that the 'vendor' folder was uploaded and your internet is working, then try again.";
+  return `The card reader couldn't start (${m.slice(0, 120) || 'unknown reason'}). You can still type the card's name below.`;
+}
+
 async function handlePhoto(file) {
   if (!file) return;
   if (!/^image\//.test(file.type) || file.size > 40e6) { toast('Please pick a photo.'); return; }
@@ -389,8 +401,8 @@ async function handlePhoto(file) {
     };
     const reader = await getReader();
     text = (await reader.recognize(canvas)).data.text || '';
-  } catch {
-    msg.textContent = "The card reader couldn't start. You can still type the card's name below.";
+  } catch (e) {
+    msg.textContent = whyReaderFailed(e);
     bar.hidden = true; lastScan = { thumb, info: null }; return;
   } finally { onProgress = null; }
   bar.hidden = true;
@@ -735,6 +747,7 @@ function start() {
     collection = []; save(); renderCollection(); toast('Collection deleted.');
   });
 
+  if (location.protocol === 'file:') showNotice(FILE_HELP);
   renderAll();
   loadRates();
 }
